@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+@layer base {
+  * {
+    @apply transition-colors duration-300;
+  }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
