@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { PricingState, AppSettings, DemandLevel } from '../types';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo, useCallback } from 'react';
+import { PricingState, AppSettings } from '../types';
 
+// Types & Interfaces
 interface Toast {
   id: string;
   message: string;
@@ -33,6 +34,7 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  // --- State Management ---
   const [pricing, setPricing] = useState<PricingState>({
     basePrice: 4500,
     occupancyRate: 65,
@@ -43,14 +45,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
-    const id = Math.random().toString(36).substring(2, 9);
-    setToasts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, 3000);
-  };
-
   const [settings, setSettings] = useState<AppSettings>(() => {
     const saved = localStorage.getItem('pricewise-settings');
     return saved ? JSON.parse(saved) : {
@@ -60,136 +54,107 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   });
 
-  useEffect(() => {
-    localStorage.setItem('pricewise-settings', JSON.stringify(settings));
-    if (settings.darkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [settings]);
+  // --- Feedback Systems ---
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3000);
+  }, []);
 
-  // Logic for suggested price and reason
-  const calculateOptimization = () => {
+  // --- Core Business Logic (Memoized for Performance) ---
+  const analytics = useMemo(() => {
     let multiplier = 1;
     let reasons: string[] = [];
     let confidence: 'High' | 'Medium' | 'Low' = 'Medium';
 
-    // Real-world context prefix
     const contextPrefix = "Based on Indian hospitality trends, ";
 
-    // Occupancy logic
+    // 1. Occupancy Analysis
     if (pricing.occupancyRate > 85) {
       multiplier += 0.25;
-      reasons.push(`with ${pricing.occupancyRate}% occupancy, increasing your price by 25% can maximize revenue without significantly affecting bookings.`);
-      confidence = 'High';
-    } else if (pricing.occupancyRate > 70) {
-      multiplier += 0.1;
-      reasons.push(`healthy ${pricing.occupancyRate}% occupancy allows for a 10% premium to capture higher yield.`);
+      reasons.push(`with ${pricing.occupancyRate}% occupancy, a 25% price increase maximizes yield.`);
       confidence = 'High';
     } else if (pricing.occupancyRate < 40) {
       multiplier -= 0.15;
-      reasons.push(`low ${pricing.occupancyRate}% occupancy requires a 15% price reduction to boost volume and stay competitive.`);
-      confidence = 'Low';
-    } else {
-      reasons.push("current occupancy levels are stable.");
-    }
-
-    // Demand logic
-    if (pricing.demandLevel === 'high') {
-      multiplier += 0.2;
-      reasons.push("High market demand justifies aggressive pricing.");
-      if (pricing.occupancyRate > 60) confidence = 'High';
-    } else if (pricing.demandLevel === 'low') {
-      multiplier -= 0.1;
-      reasons.push("Weak market demand requires lower rates to maintain flow.");
+      reasons.push(`low ${pricing.occupancyRate}% occupancy suggests a 15% discount to drive volume.`);
       confidence = 'Low';
     }
 
-    // Day Type logic
-    if (pricing.dayType === 'weekend') {
-      multiplier += 0.15;
-      reasons.push("Weekend leisure demand is typically higher in India, allowing for a weekend premium.");
-    }
-
-    // Season logic
-    if (pricing.season === 'peak') {
-      multiplier += 0.3;
-      reasons.push("Peak season baseline pricing is applied to capture maximum seasonal value.");
-    }
+    // 2. Demand & Seasonality Logic
+    if (pricing.demandLevel === 'high') multiplier += 0.20;
+    if (pricing.dayType === 'weekend') multiplier += 0.15;
+    if (pricing.season === 'peak') multiplier += 0.30;
 
     const suggested = Math.round(pricing.basePrice * multiplier);
-    const reason = contextPrefix + (reasons.length > 0 ? reasons.join(" ") : "current pricing is aligned with market conditions.");
     
-    return { suggested, reason, confidence };
-  };
+    // 3. Revenue Projections
+    const daily = pricing.basePrice * (pricing.occupancyRate / 100);
+    // Predicted occupancy logic: higher price reduces occupancy slightly, lower price boosts it
+    const priceDiffRatio = suggested / pricing.basePrice;
+    const predictedOccupancy = Math.min(100, pricing.occupancyRate * (1 / priceDiffRatio));
+    const predictedDaily = suggested * (predictedOccupancy / 100);
 
-  const { suggested: suggestedPrice, reason: recommendationReason, confidence: confidenceLevel } = calculateOptimization();
+    return {
+      suggested,
+      reason: contextPrefix + (reasons.length > 0 ? reasons.join(" ") : "current pricing is stable for market conditions."),
+      confidence,
+      daily,
+      predictedDaily
+    };
+  }, [pricing]);
 
-  // Logic for revenue breakdown
-  const dailyRevenue = pricing.basePrice * (pricing.occupancyRate / 100);
-  const weeklyRevenue = dailyRevenue * 7;
-  const monthlyRevenue = dailyRevenue * 30;
-
-  const predictedDaily = suggestedPrice * (Math.min(100, pricing.occupancyRate + (suggestedPrice < pricing.basePrice ? 12 : -8)) / 100);
-  const predictedMonthly = predictedDaily * 30;
-
-  const autoOptimize = () => {
-    // Logic to find the "sweet spot"
-    let targetPrice = pricing.basePrice;
-    let targetOccupancy = pricing.occupancyRate;
-
-    if (pricing.demandLevel === 'high' || pricing.season === 'peak') {
-      targetPrice = Math.round(pricing.basePrice * 1.25);
-      targetOccupancy = Math.max(70, pricing.occupancyRate - 5);
-    } else if (pricing.demandLevel === 'low') {
-      targetPrice = Math.round(pricing.basePrice * 0.85);
-      targetOccupancy = Math.min(90, pricing.occupancyRate + 15);
-    } else {
-      targetPrice = suggestedPrice;
-      targetOccupancy = 80; // Target healthy occupancy
-    }
-
+  // --- Handlers ---
+  const autoOptimize = useCallback(() => {
     setPricing(prev => ({
       ...prev,
-      basePrice: targetPrice,
-      occupancyRate: targetOccupancy
+      basePrice: analytics.suggested,
+      occupancyRate: Math.min(90, prev.occupancyRate + 5) // Simulate efficiency gain
     }));
+    showToast("Strategy optimized for maximum revenue 🚀", "success");
+  }, [analytics.suggested, showToast]);
 
-    showToast("Pricing updated successfully 🚀", "success");
-  };
-
-  const applyRecommendation = (type: 'increase' | 'decrease', amount: number) => {
+  const applyRecommendation = useCallback((type: 'increase' | 'decrease', amount: number) => {
     setPricing(prev => ({
       ...prev,
       basePrice: type === 'increase' ? prev.basePrice + amount : Math.max(100, prev.basePrice - amount)
     }));
-    showToast("Pricing updated successfully 🚀", "success");
-  };
+    showToast("Pricing adjusted successfully", "info");
+  }, [showToast]);
+
+  // --- Persistence & Theme Effects ---
+  useEffect(() => {
+    localStorage.setItem('pricewise-settings', JSON.stringify(settings));
+    document.documentElement.classList.toggle('dark', settings.darkMode);
+  }, [settings]);
+
+  // --- Context Value Construction ---
+  const value = useMemo(() => ({
+    pricing,
+    setPricing,
+    settings,
+    setSettings,
+    suggestedPrice: analytics.suggested,
+    recommendationReason: analytics.reason,
+    confidenceLevel: analytics.confidence,
+    revenue: {
+      current: Math.round(analytics.daily * 30),
+      predicted: Math.round(analytics.predictedDaily * 30),
+      breakdown: {
+        daily: Math.round(analytics.daily),
+        weekly: Math.round(analytics.daily * 7),
+        monthly: Math.round(analytics.daily * 30)
+      }
+    },
+    autoOptimize,
+    applyRecommendation,
+    showToast,
+    toasts
+  }), [pricing, settings, analytics, autoOptimize, applyRecommendation, showToast, toasts]);
 
   return (
-    <AppContext.Provider value={{
-      pricing,
-      setPricing,
-      settings,
-      setSettings,
-      suggestedPrice,
-      recommendationReason,
-      confidenceLevel,
-      revenue: {
-        current: Math.round(monthlyRevenue),
-        predicted: Math.round(predictedMonthly),
-        breakdown: {
-          daily: Math.round(dailyRevenue),
-          weekly: Math.round(weeklyRevenue),
-          monthly: Math.round(monthlyRevenue)
-        }
-      },
-      autoOptimize,
-      applyRecommendation,
-      showToast,
-      toasts
-    }}>
+    <AppContext.Provider value={value}>
       {children}
     </AppContext.Provider>
   );
