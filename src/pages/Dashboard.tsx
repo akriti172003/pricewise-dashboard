@@ -67,7 +67,10 @@ export const Dashboard: React.FC = () => {
     recommendationReason,
     confidenceLevel,
     autoOptimize,
-    applyRecommendation 
+    applyRecommendation,
+    fetchAIStrategy,
+    aiLoading,
+    isAIGenerated
   } = useAppContext();
   
   const [isCalculating, setIsCalculating] = useState(false);
@@ -123,6 +126,14 @@ export const Dashboard: React.FC = () => {
                 Control Center
               </h2>
               <div className="flex gap-2">
+                <button 
+                  onClick={fetchAIStrategy}
+                  disabled={aiLoading}
+                  className="flex items-center gap-2 px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold rounded-full transition-all shadow-lg shadow-indigo-500/20 disabled:opacity-50"
+                >
+                  <Sparkles className="w-3 h-3" />
+                  {aiLoading ? 'Asking AI...' : 'Get AI Strategy'}
+                </button>
                 <button 
                   onClick={autoOptimize}
                   className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-full transition-all shadow-lg shadow-emerald-500/20"
@@ -303,9 +314,17 @@ export const Dashboard: React.FC = () => {
               </div>
 
               <div className="p-4 bg-white/5 rounded-2xl border border-white/10 space-y-2">
-                <div className="flex items-center gap-2 text-xs font-bold text-emerald-400">
-                  <Info className="w-3 h-3" />
-                  Strategy Insight
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-bold text-emerald-400">
+                    <Info className="w-3 h-3" />
+                    Strategy Insight
+                  </div>
+                  {isAIGenerated && (
+                    <div className="flex items-center gap-1 px-2 py-0.5 bg-indigo-500/20 text-indigo-400 rounded-full text-[9px] font-black uppercase tracking-wider">
+                      <Sparkles className="w-2.5 h-2.5" />
+                      AI Generated
+                    </div>
+                  )}
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed italic">
                   "{recommendationReason}"
@@ -495,4 +514,3 @@ export const Dashboard: React.FC = () => {
     </div>
   );
 };
-

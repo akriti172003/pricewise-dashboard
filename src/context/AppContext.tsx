@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useMemo, useCallback } from 'react';
 import { PricingState, AppSettings } from '../types';
 
-// Step 1: Define the Backend URL
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 interface Toast {
@@ -31,7 +30,10 @@ interface AppContextType {
   applyRecommendation: (type: 'increase' | 'decrease', amount: number) => void;
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
   toasts: Toast[];
-  saveCurrentScenario: () => Promise<void>; // Added for backend persistence
+  saveCurrentScenario: () => Promise<void>;
+  fetchAIStrategy: () => Promise<void>;
+  aiLoading: boolean;
+  isAIGenerated: boolean;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -55,6 +57,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   });
 
+  // AI state — overrides the local fallback when populated
+  const [aiResult, setAiResult] = useState<{ multiplier: number; confidence: 'High' | 'Medium' | 'Low'; reason: string } | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+
   const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'success') => {
     const id = Math.random().toString(36).substring(2, 9);
     setToasts(prev => [...prev, { id, message, type }]);
@@ -63,17 +69,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }, 3000);
   }, []);
 
-  // --- Backend Integration Logic ---
   const saveCurrentScenario = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/scenarios`, {
+      const response = await fetch(`${API_BASE_URL}/api/save-scenario`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...pricing,
-          suggestedPrice: analytics.suggested,
-          timestamp: new Date()
-        }),
+        body: JSON.stringify(pricing),
       });
 
       if (response.ok) {
@@ -87,7 +88,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [pricing, showToast]);
 
-  const analytics = useMemo(() => {
+  // Local fallback logic — used instantly, and if AI call fails
+  const localAnalytics = useMemo(() => {
     let multiplier = 1;
     let reasons: string[] = [];
     let confidence: 'High' | 'Medium' | 'Low' = 'Medium';
@@ -108,14 +110,59 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (pricing.dayType === 'weekend') multiplier += 0.15;
     if (pricing.season === 'peak') multiplier += 0.30;
 
-    const suggested = Math.round(pricing.basePrice * multiplier);
+    return {
+      multiplier,
+      reason: contextPrefix + (reasons.length > 0 ? reasons.join(" ") : "current pricing is stable."),
+      confidence
+    };
+  }, [pricing]);
+
+  // AI call — replaces localAnalytics result when available
+  const fetchAIStrategy = useCallback(async () => {
+    setAiLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/ai-strategy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pricing),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setAiResult({ multiplier: data.multiplier, confidence: data.confidence, reason: data.reason });
+        showToast("AI strategy generated ✨", "success");
+      } else {
+        throw new Error(data.message);
+      }
+    } catch (err) {
+      console.error("AI Strategy error:", err);
+      showToast("AI call failed, using fallback logic", "error");
+      setAiResult(null);
+    } finally {
+      setAiLoading(false);
+    }
+  }, [pricing, showToast]);
+
+  // Reset AI result whenever inputs change, so stale AI text isn't shown for new inputs
+  useEffect(() => {
+    setAiResult(null);
+  }, [pricing.basePrice, pricing.occupancyRate, pricing.demandLevel, pricing.dayType, pricing.season]);
+
+  const analytics = useMemo(() => {
+    const active = aiResult ?? localAnalytics;
+    const suggested = Math.round(pricing.basePrice * active.multiplier);
     const daily = pricing.basePrice * (pricing.occupancyRate / 100);
     const priceDiffRatio = suggested / pricing.basePrice;
     const predictedOccupancy = Math.min(100, pricing.occupancyRate * (1 / priceDiffRatio));
     const predictedDaily = suggested * (predictedOccupancy / 100);
 
-    return { suggested, reason: contextPrefix + (reasons.length > 0 ? reasons.join(" ") : "current pricing is stable."), confidence, daily, predictedDaily };
-  }, [pricing]);
+    return {
+      suggested,
+      reason: active.reason,
+      confidence: active.confidence,
+      daily,
+      predictedDaily
+    };
+  }, [pricing, aiResult, localAnalytics]);
 
   const autoOptimize = useCallback(() => {
     setPricing(prev => ({
@@ -154,8 +201,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     },
     autoOptimize, applyRecommendation, showToast, toasts,
-    saveCurrentScenario // Exported function
-  }), [pricing, settings, analytics, autoOptimize, applyRecommendation, showToast, toasts, saveCurrentScenario]);
+    saveCurrentScenario,
+    fetchAIStrategy,
+    aiLoading,
+    isAIGenerated: aiResult !== null
+  }), [pricing, settings, analytics, autoOptimize, applyRecommendation, showToast, toasts, saveCurrentScenario, fetchAIStrategy, aiLoading, aiResult]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
